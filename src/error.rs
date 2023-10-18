@@ -9,6 +9,7 @@ pub(crate) enum Error {
     Utf8OsString,
     MissingMuslTarget,
     MissingLicense,
+    FileOutsideTarget(String),
 }
 
 impl Display for Error {
@@ -24,6 +25,9 @@ impl Display for Error {
             ),
             Error::MissingLicense => {
                 write!(f, "Missing LICENSE file. See https://choosealicense.com/")
+            },
+            Error::FileOutsideTarget(path) => {
+                write!(f, "Included file '{path}' would be outside the target directory.")
             }
         }
     }

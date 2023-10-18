@@ -11,7 +11,16 @@ license = "MIT"
 keywords = ["cargo", "subcommand", "archlinux", "aur"]
 categories = ["command-line-utilities"]
 
+# NMS: This is temporarily here for testing.
+[package.metadata.aur]
+files = [
+    ["CHANGELOG.md","usr/share/cargo-aur/CHANGELOG.md"],
+    ["LICENSE","usr/share/cargo-aur/LICENSE"],
+    ["CHANGELOG.md","usr/local/share/cargo-aur/CHANGELOG.md"]
+]
+
 [dependencies]
+cargo-util = "0.2.6"
 colored = "2.0"
 gumdrop = "0.8"
 hmac-sha256 = "1.1"

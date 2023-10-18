@@ -1,6 +1,7 @@
 mod error;
 
 use crate::error::Error;
+use cargo_util::paths::normalize_path;
 use colored::*;
 use gumdrop::{Options, ParsingStyle};
 use hmac_sha256::Hash;
@@ -115,6 +116,9 @@ struct AUR {
     depends: Vec<String>,
     #[serde(default)]
     optdepends: Vec<String>,
+    #[serde(default)]
+    /// A list of filenames to include and their install location
+    files: Vec<(String,String)>
 }
 
 impl std::fmt::Display for Metadata {
@@ -343,6 +347,21 @@ where
             file_name, file_name
         )?;
     }
+    
+    if let Some(metadata) = &config.package.metadata {
+        if let Some(aur) = &metadata.aur {
+            for (_,target) in &aur.files {
+                // earlier process made sure these files would go into the target.
+                writeln!(
+                    file,
+                    "    install -Dm644 \"{}\" \"$pkgdir/{}\"",
+                    target,target
+                )?;
+
+            }
+        }
+    }
+
 
     writeln!(file, "}}")?;
     Ok(())
@@ -374,12 +393,52 @@ fn tarball(musl: bool, license: Option<&DirEntry>, config: &Config) -> Result<()
     };
 
     let binary_name = config.binary_name();
-    let mut binary: PathBuf = target_dir.into();
+    let mut binary: PathBuf = (&target_dir).into();
     binary.push(release_dir);
     binary.push(binary_name);
 
     strip(&binary)?;
     std::fs::copy(binary, binary_name)?;
+
+    let files = if let Some(metadata) = &config.package.metadata {
+        if let Some(aur) = &metadata.aur {
+            if !aur.files.is_empty() {
+                let manifest_dir = match std::env::var_os("CARGO_MANIFEST_DIR") {
+                    Some(p) => p,
+                    None => ".".into()
+                };
+                aur.files.iter().map(|(source,target)| {
+                    let mut copy_from: PathBuf = (&manifest_dir).into();
+                    copy_from.push(source);
+                    let copy_to: PathBuf = target.into();
+
+                    // some security checks, protect the user from themselves to avoid copying the file outside of the target directory.
+                    if copy_to.is_absolute() {
+                        return Err(Error::FileOutsideTarget(copy_to.to_string_lossy().to_string()))
+                    } else {
+                        let expected_parent: PathBuf = "target/cargo-aur".into();
+                        // Canonicalize will error if the path does not exist. There's a normalize_path in cargo-util. 
+                        let check_copy_to = normalize_path(&expected_parent.join(&copy_to));
+                        if !check_copy_to.starts_with(expected_parent) {
+                            return Err(Error::FileOutsideTarget(copy_to.to_string_lossy().to_string()))
+                        }
+                    }
+
+                    if let Some(dirname) = copy_to.parent() {
+                        std::fs::create_dir_all(dirname)?;
+                    }
+                    std::fs::copy(copy_from, &copy_to)?;
+                    Ok((source,copy_to))
+                }).collect::<Result<_,_>>()?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
 
     // Create the tarball.
     p("Packing tarball...".bold());
@@ -391,7 +450,15 @@ fn tarball(musl: bool, license: Option<&DirEntry>, config: &Config) -> Result<()
     if let Some(lic) = license {
         command.arg(lic.path());
     }
+    for file in &files {
+        command.arg(&file.1);
+    }
     command.status()?;
+
+    for file in files {
+        // NOTE: This only removes the files, not any parent directories. I'd like to do more (remove_dir_all), but I don't want to accidentally delete the users entire project because they messed up a path name in their configuration. At least this will keep them out of the user's git status. A folder in /tmp would probably be a better place to put all of this. Or perhaps put it in target/cargo-aur? 
+        std::fs::remove_file(file.1)?;
+    }
 
     std::fs::remove_file(binary_name)?;
 
